@@ -12,9 +12,48 @@ const corsHeaders = {
 };
 
 const responseCache = new Map();
-const CACHE_TTL = 3600000;
+const CACHE_TTL = 3600000; // 1 hour
+const SIMILARITY_THRESHOLD = 0.6;
 
 let assistantId = null;
+
+// Smart cache key generation
+function normalizeMessage(message) {
+  return message.toLowerCase()
+    .trim()
+    .replace(/[?!.,]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+// Find similar cached responses
+function findSimilarInCache(message) {
+  const normalized = normalizeMessage(message);
+  const words = normalized.split(' ');
+  
+  // Try exact match first
+  if (responseCache.has(normalized)) {
+    const cached = responseCache.get(normalized);
+    if (Date.now() - cached.timestamp < CACHE_TTL) {
+      return cached;
+    }
+  }
+  
+  // Find similar queries (60%+ word overlap)
+  for (const [cachedKey, cachedValue] of responseCache.entries()) {
+    if (Date.now() - cachedValue.timestamp >= CACHE_TTL) continue;
+    
+    const cachedWords = cachedKey.split(' ');
+    const commonWords = words.filter(w => w.length > 3 && cachedWords.includes(w));
+    const similarity = commonWords.length / Math.max(words.length, cachedWords.length);
+    
+    if (similarity >= SIMILARITY_THRESHOLD) {
+      console.log(`Cache hit with ${Math.round(similarity * 100)}% similarity`);
+      return cachedValue;
+    }
+  }
+  
+  return null;
+}
 
 async function getOrCreateAssistant() {
   if (assistantId) return assistantId;
