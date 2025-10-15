@@ -28,6 +28,7 @@ CRITICAL INSTRUCTIONS:
 - Answer questions in 2-5 short sentences using ONLY information from the files you have access to
 - When asked about salary in ANY way (pay, money, earn, compensation, wages, etc.), you MUST use the EXACT numbers: Starting pay is $66,432, which increases to $73,824 upon graduation from the academy.
 - When asked about "troop locations" or "where can I work" or "locations" or "posts", provide specific troop headquarters and coverage areas if available in your documents.
+- When asked about qualifications, requirements, or eligibility, explain the minimum qualifications clearly from your documents.
 - When asked about the hiring process, application steps, or requirements, explain the process clearly from your documents.
 - NEVER use numbered lists or bullet points. Write in natural paragraphs with line breaks between thoughts.
 - NEVER include source citations, file names, or document references in your responses
@@ -40,7 +41,7 @@ When the user asks about applying, contacting a recruiter, or next steps, tell t
       tools: [{ type: "file_search" }],
       tool_resources: {
         file_search: {
-          vector_store_ids: ["YOUR_VECTOR_STORE_ID_HERE"]
+          vector_store_ids: ["vs_68efc55ad9108191af23dc3b86942e71"]
         }
       }
     });
@@ -68,13 +69,13 @@ function getCacheKey(message) {
 }
 
 export default async function handler(req, res) {
+  // Set CORS headers
   Object.entries(corsHeaders).forEach(([key, value]) => {
     res.setHeader(key, value);
   });
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+    return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
@@ -82,12 +83,23 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Check for API key
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OPENAI_API_KEY not found");
+      return res.status(500).json({ 
+        error: 'Server configuration error',
+        details: 'API key not configured',
+        success: false
+      });
+    }
+
     const { message, threadId } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
+    // Check cache
     const cacheKey = getCacheKey(message);
     const cached = responseCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -101,8 +113,10 @@ export default async function handler(req, res) {
       });
     }
 
+    // Get or create assistant
     const assistId = await getOrCreateAssistant();
 
+    // Create or use existing thread
     let thread;
     if (threadId) {
       thread = { id: threadId };
@@ -110,11 +124,13 @@ export default async function handler(req, res) {
       thread = await openai.beta.threads.create();
     }
 
+    // Add message to thread
     await openai.beta.threads.messages.create(thread.id, {
       role: "user",
       content: message
     });
 
+    // Run the assistant
     const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
       assistant_id: assistId
     });
@@ -129,6 +145,7 @@ export default async function handler(req, res) {
       const shouldScrollToForm = reply.includes('[SCROLL_TO_FORM]');
       const cleanReply = reply.replace('[SCROLL_TO_FORM]', '').trim();
 
+      // Cache the response
       responseCache.set(cacheKey, {
         reply: cleanReply,
         threadId: thread.id,
@@ -136,6 +153,7 @@ export default async function handler(req, res) {
         timestamp: Date.now()
       });
 
+      // Limit cache size
       if (responseCache.size > 100) {
         const firstKey = responseCache.keys().next().value;
         responseCache.delete(firstKey);
@@ -149,17 +167,18 @@ export default async function handler(req, res) {
         success: true 
       });
     } else {
-      console.error("Run failed:", run.status);
+      console.error("Run failed with status:", run.status);
       return res.status(500).json({ 
         error: 'Failed to get response',
-        details: run.status
+        details: `Run status: ${run.status}`,
+        success: false
       });
     }
 
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error in chat handler:', error);
     return res.status(500).json({ 
-      error: 'Failed to get response',
+      error: 'Failed to process request',
       details: error.message,
       success: false
     });
