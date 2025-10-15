@@ -2,11 +2,7 @@
   "name": "mshp-chatbot",
   "version": "1.0.0",
   "description": "Missouri State Highway Patrol Recruiting Chatbot",
-  "main": "api/chat.js",
-  "scripts": {
-    "dev": "vercel dev",
-    "build": "vercel build"
-  },
+  "type": "module",
   "dependencies": {
     "openai": "^4.77.0"
   },
