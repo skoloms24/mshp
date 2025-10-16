@@ -7,7 +7,7 @@ const openai = new OpenAI({
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
   'Access-Control-Max-Age': '86400',
 };
 
@@ -103,10 +103,6 @@ function removeCitations(text) {
   return cleaned;
 }
 
-function getCacheKey(message) {
-  return message.toLowerCase().trim();
-}
-
 export default async function handler(req, res) {
   // Set CORS headers
   Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -138,11 +134,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Check cache
-    const cacheKey = getCacheKey(message);
-    const cached = responseCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      console.log("Cache hit for:", message);
+    // Check smart cache
+    const cached = findSimilarInCache(message);
+    if (cached) {
+      console.log("Smart cache hit for:", message);
       return res.status(200).json({
         reply: cached.reply,
         threadId: cached.threadId,
@@ -184,18 +179,19 @@ export default async function handler(req, res) {
       const shouldScrollToForm = reply.includes('[SCROLL_TO_FORM]');
       const cleanReply = reply.replace('[SCROLL_TO_FORM]', '').trim();
 
-      // Cache the response
-      responseCache.set(cacheKey, {
+      // Cache with normalized key
+      const normalizedKey = normalizeMessage(message);
+      responseCache.set(normalizedKey, {
         reply: cleanReply,
         threadId: thread.id,
         scrollToForm: shouldScrollToForm,
         timestamp: Date.now()
       });
 
-      // Limit cache size
+      // Limit cache size to 100 entries
       if (responseCache.size > 100) {
-        const firstKey = responseCache.keys().next().value;
-        responseCache.delete(firstKey);
+        const oldestKey = responseCache.keys().next().value;
+        responseCache.delete(oldestKey);
       }
 
       return res.status(200).json({ 
