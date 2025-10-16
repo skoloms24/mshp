@@ -12,12 +12,12 @@ const corsHeaders = {
 };
 
 const responseCache = new Map();
-const CACHE_TTL = 3600000; // 1 hour
+const CACHE_TTL = 3600000;
 const SIMILARITY_THRESHOLD = 0.6;
 
 let assistantId = null;
+const ASSISTANT_VERSION = "v4";
 
-// Smart cache key generation
 function normalizeMessage(message) {
   return message.toLowerCase()
     .trim()
@@ -25,12 +25,10 @@ function normalizeMessage(message) {
     .replace(/\s+/g, ' ');
 }
 
-// Find similar cached responses
 function findSimilarInCache(message) {
   const normalized = normalizeMessage(message);
   const words = normalized.split(' ');
   
-  // Try exact match first
   if (responseCache.has(normalized)) {
     const cached = responseCache.get(normalized);
     if (Date.now() - cached.timestamp < CACHE_TTL) {
@@ -38,7 +36,6 @@ function findSimilarInCache(message) {
     }
   }
   
-  // Find similar queries (60%+ word overlap)
   for (const [cachedKey, cachedValue] of responseCache.entries()) {
     if (Date.now() - cachedValue.timestamp >= CACHE_TTL) continue;
     
@@ -56,7 +53,11 @@ function findSimilarInCache(message) {
 }
 
 async function getOrCreateAssistant() {
-  if (assistantId) return assistantId;
+  const storedVersion = process.env.ASSISTANT_VERSION || "v1";
+  
+  if (assistantId && storedVersion === ASSISTANT_VERSION) {
+    return assistantId;
+  }
   
   try {
     const assistant = await openai.beta.assistants.create({
@@ -64,16 +65,16 @@ async function getOrCreateAssistant() {
       instructions: `You are the Missouri State Highway Patrol Recruiting Assistant. Tone: warm, concise, plain English.
 
 CRITICAL INSTRUCTIONS:
-- Answer questions in 2-5 short sentences using ONLY information from the files you have access to
+- Answer questions in 2-5 short sentences using ONLY information provided in these instructions or from the files you have access to
 - When asked about salary in ANY way (pay, money, earn, compensation, wages, etc.), you MUST use the EXACT numbers: Starting pay is $66,432, which increases to $73,824 upon graduation from the academy.
 - When asked about "troop locations" or "where can I work" or "locations" or "posts", provide specific troop headquarters and coverage areas if available in your documents.
 - When asked about qualifications, requirements, or eligibility, explain the minimum qualifications clearly from your documents.
 - When asked about the hiring process, application steps, or requirements, explain the process clearly from your documents.
-- When asked about the FITNESS TEST, PHYSICAL FITNESS TEST, or FITNESS ASSESSMENT, you MUST provide this exact information: The Missouri State Highway Patrol fitness test consists of two events: the 500-meter row and the 1.5-mile run. Percentile scores from both events are averaged to determine the overall fitness score. To pass, applicants must achieve an overall score above the 40th percentile, and no individual event score may fall below the 6th percentile.
+- When asked about the FITNESS TEST, PHYSICAL FITNESS TEST, FITNESS ASSESSMENT, or FITNESS EVALUATION, respond with this EXACT information: The Missouri State Highway Patrol fitness test is designed to evaluate overall endurance and cardiovascular fitness. The assessment consists of two events: the 500-meter row and the 1.5-mile run. Upon completion, the percentile scores from both events are averaged to determine the overall fitness score. To successfully pass the test, applicants must achieve an overall score above the 40th percentile, and no individual event score may fall below the 6th percentile.
 - NEVER use numbered lists or bullet points. Write in natural paragraphs with line breaks between thoughts.
 - NEVER include source citations, file names, or document references in your responses
 - Break longer responses into 2-3 short paragraphs with blank lines between them
-- If you're not certain about specific information, say "For specific details about this, please complete the contact form at the bottom of this page and a recruiter can provide more information." and include [SCROLL_TO_FORM]
+- If you're not certain about specific information (other than salary and fitness test which are provided above), say "For specific details about this, please complete the contact form at the bottom of this page and a recruiter can provide more information." and include [SCROLL_TO_FORM]
 - DO NOT automatically mention the contact form unless: (1) you don't know the answer, (2) the user asks about applying, contacting someone, or next steps, (3) the user asks for specific location details not in your documents
 
 When the user asks about applying, contacting a recruiter, or next steps, tell them: "Please complete the contact form at the bottom of this page and a recruiter will reach out to you." and include this exact tag: [SCROLL_TO_FORM]`,
@@ -105,7 +106,6 @@ function removeCitations(text) {
 }
 
 export default async function handler(req, res) {
-  // Set CORS headers
   Object.entries(corsHeaders).forEach(([key, value]) => {
     res.setHeader(key, value);
   });
@@ -119,7 +119,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Check for API key
     if (!process.env.OPENAI_API_KEY) {
       console.error("OPENAI_API_KEY not found");
       return res.status(500).json({ 
@@ -135,7 +134,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Check smart cache
     const cached = findSimilarInCache(message);
     if (cached) {
       console.log("Smart cache hit for:", message);
@@ -148,10 +146,8 @@ export default async function handler(req, res) {
       });
     }
 
-    // Get or create assistant
     const assistId = await getOrCreateAssistant();
 
-    // Create or use existing thread
     let thread;
     if (threadId) {
       thread = { id: threadId };
@@ -159,13 +155,11 @@ export default async function handler(req, res) {
       thread = await openai.beta.threads.create();
     }
 
-    // Add message to thread
     await openai.beta.threads.messages.create(thread.id, {
       role: "user",
       content: message
     });
 
-    // Run the assistant
     const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
       assistant_id: assistId
     });
@@ -180,7 +174,6 @@ export default async function handler(req, res) {
       const shouldScrollToForm = reply.includes('[SCROLL_TO_FORM]');
       const cleanReply = reply.replace('[SCROLL_TO_FORM]', '').trim();
 
-      // Cache with normalized key
       const normalizedKey = normalizeMessage(message);
       responseCache.set(normalizedKey, {
         reply: cleanReply,
@@ -189,7 +182,6 @@ export default async function handler(req, res) {
         timestamp: Date.now()
       });
 
-      // Limit cache size to 100 entries
       if (responseCache.size > 100) {
         const oldestKey = responseCache.keys().next().value;
         responseCache.delete(oldestKey);
