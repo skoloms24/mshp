@@ -2,24 +2,8 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/chat.js",
+      "src": "api/**/*.js",
       "use": "@vercel/node"
-    },
-    {
-      "src": "api/analytics.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/chat",
-      "dest": "/api/chat.js",
-      "methods": ["GET", "POST", "OPTIONS"]
-    },
-    {
-      "src": "/api/analytics",
-      "dest": "/api/analytics.js",
-      "methods": ["GET", "DELETE", "OPTIONS"]
     }
   ],
   "headers": [
