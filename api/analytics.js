@@ -1,10 +1,14 @@
-import { kv } from '@vercel/kv';
+import { Redis } from '@upstash/redis';
+
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+});
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Max-Age': '86400',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
 };
 
 export default async function handler(req, res) {
@@ -16,70 +20,77 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  try {
-    // GET - Retrieve analytics
-    if (req.method === 'GET') {
-      // Get top 20 questions from sorted set
-      const topQuestions = await kv.zrange('mshp:questions:ranked', 0, 19, {
-        rev: true,
-        withScores: true
-      });
-
-      // Format the response
-      const questions = [];
-      for (let i = 0; i < topQuestions.length; i += 2) {
-        const question = topQuestions[i];
-        const count = topQuestions[i + 1];
-        questions.push({
-          question,
-          count
-        });
-      }
-
-      // Calculate stats
-      const totalQuestions = questions.reduce((sum, q) => sum + q.count, 0);
-      const uniqueQuestions = questions.length;
-      const mostPopularCount = questions.length > 0 ? questions[0].count : 0;
-
-      return res.status(200).json({
-        success: true,
-        stats: {
-          totalQuestions,
-          uniqueQuestions,
-          mostPopularCount
-        },
-        questions
-      });
-    }
-
-    // DELETE - Clear all analytics
-    if (req.method === 'DELETE') {
-      // Get all questions
-      const allQuestions = await kv.zrange('mshp:questions:ranked', 0, -1);
-      
-      // Delete individual question counters
-      const deletePromises = allQuestions.map(q => 
-        kv.del(`mshp:analytics:${q}`)
-      );
-      await Promise.all(deletePromises);
-      
-      // Delete the sorted set
-      await kv.del('mshp:questions:ranked');
-
-      return res.status(200).json({
-        success: true,
-        message: 'Analytics cleared successfully'
-      });
-    }
-
+  if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const allQuestions = [];
+
+    // Get all MSHP questions with timestamp keys
+    try {
+      const keys = await redis.keys('mshp:question:*');
+      console.log('Found question keys:', keys?.length || 0);
+      
+      if (keys && keys.length > 0) {
+        for (const key of keys) {
+          try {
+            const data = await redis.get(key);
+            if (data && data.question) {
+              allQuestions.push({
+                question: data.question,
+                category: data.category || 'Other Questions',
+                icon: data.icon || '❓',
+                timestamp: data.timestamp || new Date().toISOString(),
+                count: 1
+              });
+            }
+          } catch (e) {
+            console.error(`Error getting data for key ${key}:`, e);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching questions:', e);
+    }
+
+    // If no questions found, return empty response
+    if (allQuestions.length === 0) {
+      console.log('No questions found');
+      return res.status(200).json({
+        success: true,
+        totalQuestions: 0,
+        uniqueQuestions: 0,
+        questions: [],
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Sort by timestamp (most recent first)
+    allQuestions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    // Calculate stats
+    const totalQuestions = allQuestions.length;
+    const uniqueQuestions = new Set(allQuestions.map(q => q.question.toLowerCase())).size;
+
+    console.log(`Returning ${totalQuestions} total questions, ${uniqueQuestions} unique`);
+
+    return res.status(200).json({
+      success: true,
+      totalQuestions,
+      uniqueQuestions,
+      questions: allQuestions,
+      timestamp: new Date().toISOString()
+    });
 
   } catch (error) {
-    console.error('Error in analytics handler:', error);
+    console.error('Error fetching analytics:', error);
+    
     return res.status(500).json({
-      error: 'Failed to process request',
+      success: false,
+      error: 'Failed to fetch analytics',
       details: error.message,
-      success: false
+      timestamp: new Date().toISOString()
     });
   }
 }
