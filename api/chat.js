@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { kv } from '@vercel/kv';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -50,6 +51,25 @@ function findSimilarInCache(message) {
   }
   
   return null;
+}
+
+async function trackQuestion(question) {
+  try {
+    const normalizedQuestion = question.toLowerCase().trim().substring(0, 100);
+    const key = `mshp:analytics:${normalizedQuestion}`;
+    
+    // Increment the count for this question
+    await kv.incr(key);
+    
+    // Also track in a sorted set for easy top-N retrieval
+    const count = await kv.get(key);
+    await kv.zadd('mshp:questions:ranked', { score: count, member: normalizedQuestion });
+    
+    console.log(`Tracked question: "${normalizedQuestion}" (count: ${count})`);
+  } catch (error) {
+    console.error('Error tracking question:', error);
+    // Don't fail the request if analytics fails
+  }
 }
 
 async function getOrCreateAssistant() {
@@ -133,6 +153,9 @@ export default async function handler(req, res) {
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
+
+    // Track the question in KV storage (async, don't wait)
+    trackQuestion(message).catch(err => console.error('Analytics error:', err));
 
     const cached = findSimilarInCache(message);
     if (cached) {
