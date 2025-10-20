@@ -1,8 +1,28 @@
 import OpenAI from "openai";
+import { Redis } from "@upstash/redis";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+
+// Connect to Redis with MSHP prefix
+let redis;
+try {
+  const redisUrl = process.env.KV_REST_API_URL;
+  const redisToken = process.env.KV_REST_API_TOKEN;
+
+  if (redisUrl && redisToken) {
+    redis = new Redis({
+      url: redisUrl,
+      token: redisToken
+    });
+    console.log('✅ Redis connected successfully');
+  } else {
+    console.log('❌ Redis credentials not found');
+  }
+} catch (error) {
+  console.error('Redis connection error:', error);
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,6 +70,163 @@ function findSimilarInCache(message) {
   }
   
   return null;
+}
+
+// Helper function to check if message is actually a question
+function isActualQuestion(message) {
+  const text = message.toLowerCase().trim();
+  
+  if (text.length < 8) return false;
+  
+  const nonQuestions = [
+    'yes', 'ye', 'no', 'ok', 'okay', 'thanks', 'thank you', 
+    'nope', 'yep', 'yeah', 'nah', 'sure', 'fine', 'alright',
+    'hello', 'hi', 'hey', 'bye', 'goodbye'
+  ];
+  if (nonQuestions.includes(text)) return false;
+  
+  const questionIndicators = [
+    'how', 'what', 'when', 'where', 'why', 'who', 'which', 
+    'can i', 'do i', 'should i', 'is the', 'is there', 'are there', 
+    'will', 'would', 'could', 'does', 'am i', 'may i', '?'
+  ];
+  
+  return questionIndicators.some(indicator => text.includes(indicator));
+}
+
+// Categorize questions for MSHP
+function categorizeQuestion(question) {
+  const q = question.toLowerCase();
+
+  if (
+    q.includes("salary") ||
+    q.includes("pay") ||
+    q.includes("wage") ||
+    q.includes("compensation") ||
+    (q.includes("how much") && (q.includes("make") || q.includes("earn") || q.includes("paid")))
+  ) {
+    return { category: "Salary / Pay / Compensation", icon: "💰" };
+  }
+
+  if (
+    q.includes("location") ||
+    q.includes("troop") ||
+    (q.includes("where") && (q.includes("work") || q.includes("posted") || q.includes("stationed"))) ||
+    q.includes("which area") ||
+    q.includes("post")
+  ) {
+    return { category: "Locations / Troop Assignments", icon: "📍" };
+  }
+
+  if (
+    q.includes("qualification") ||
+    q.includes("requirement") ||
+    q.includes("eligible") ||
+    q.includes("diploma") ||
+    q.includes("ged") ||
+    q.includes("degree") ||
+    q.includes("education") ||
+    q.includes("high school") ||
+    q.includes("citizen") ||
+    q.includes("qualify")
+  ) {
+    return { category: "Qualifications / Requirements", icon: "✅" };
+  }
+
+  if (
+    q.includes("fitness") ||
+    q.includes("physical") ||
+    q.includes("test") && (q.includes("physical") || q.includes("fitness")) ||
+    q.includes("500") ||
+    q.includes("mile") ||
+    q.includes("row")
+  ) {
+    return { category: "Fitness Test / Physical Requirements", icon: "💪" };
+  }
+
+  if (
+    (q.includes("how") && (q.includes("apply") || q.includes("application"))) ||
+    q.includes("hiring process") ||
+    q.includes("application process") ||
+    (q.includes("how long") && (q.includes("process") || q.includes("take"))) ||
+    q.includes("steps to")
+  ) {
+    return { category: "Hiring Process / How to Apply", icon: "📝" };
+  }
+
+  if (
+    q.includes("background") ||
+    q.includes("criminal") ||
+    q.includes("felony") ||
+    q.includes("record") ||
+    q.includes("conviction")
+  ) {
+    return { category: "Background Check / Criminal Record", icon: "🔍" };
+  }
+
+  if (
+    q.includes("benefit") ||
+    q.includes("insurance") ||
+    q.includes("health") ||
+    q.includes("vacation") ||
+    q.includes("time off") ||
+    q.includes("retirement")
+  ) {
+    return { category: "Benefits / Insurance", icon: "🏥" };
+  }
+
+  if (
+    q.includes("academy") ||
+    q.includes("training") ||
+    q.includes("graduation") ||
+    q.includes("cadet")
+  ) {
+    return { category: "Training / Academy", icon: "🎓" };
+  }
+
+  if (
+    q.includes("contact") ||
+    q.includes("recruiter") ||
+    q.includes("phone") ||
+    q.includes("email") ||
+    q.includes("call") ||
+    q.includes("reach out")
+  ) {
+    return { category: "Contact / Recruiter", icon: "📞" };
+  }
+
+  return { category: "Other Questions", icon: "❓" };
+}
+
+// Track analytics with MSHP prefix
+async function logAnalytics(question) {
+  if (!redis) {
+    console.log('Redis not available, skipping analytics');
+    return;
+  }
+  
+  if (!isActualQuestion(question)) {
+    console.log('⚠️ Skipping non-question:', question);
+    return;
+  }
+  
+  try {
+    const { category, icon } = categorizeQuestion(question);
+    const analyticsKey = `mshp:question:${Date.now()}`;
+    
+    await redis.set(analyticsKey, {
+      question: question,
+      category: category,
+      icon: icon,
+      timestamp: new Date().toISOString(),
+    });
+    
+    await redis.expire(analyticsKey, 30 * 24 * 60 * 60);
+    
+    console.log(`✅ MSHP Analytics logged: "${question}" → ${icon} ${category}`);
+  } catch (error) {
+    console.error('❌ Analytics logging error:', error);
+  }
 }
 
 async function getOrCreateAssistant() {
@@ -133,6 +310,9 @@ export default async function handler(req, res) {
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
+
+    // Log analytics (with filtering and categorization)
+    await logAnalytics(message);
 
     const cached = findSimilarInCache(message);
     if (cached) {
