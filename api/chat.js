@@ -108,9 +108,20 @@ function categorizeQuestion(question) {
     return { category: "Salary / Pay / Compensation", icon: "💰" };
   }
 
+  // Day in the life / Experience questions
+  if (
+    (q.includes("what") && q.includes("like") && (q.includes("being") || q.includes("working"))) ||
+    q.includes("day in the life") ||
+    q.includes("typical day") ||
+    (q.includes("what") && q.includes("do") && (q.includes("daily") || q.includes("day to day"))) ||
+    q.includes("experience")
+  ) {
+    return { category: "Day-to-Day / Trooper Experience", icon: "👮" };
+  }
+
   if (
     q.includes("location") ||
-    q.includes("troop") ||
+    (q.includes("troop") && !q.includes("trooper")) ||
     (q.includes("where") && (q.includes("work") || q.includes("posted") || q.includes("stationed"))) ||
     q.includes("which area") ||
     q.includes("post")
