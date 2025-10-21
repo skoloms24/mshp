@@ -98,6 +98,17 @@ function isActualQuestion(message) {
 function categorizeQuestion(question) {
   const q = question.toLowerCase();
 
+  // Day in the life / Experience questions - CHECK THIS FIRST
+  if (
+    (q.includes("what") && q.includes("like") && (q.includes("being") || q.includes("working"))) ||
+    q.includes("day in the life") ||
+    q.includes("typical day") ||
+    (q.includes("what") && q.includes("do") && (q.includes("daily") || q.includes("day to day"))) ||
+    (q.includes("what is it like") || q.includes("what's it like"))
+  ) {
+    return { category: "Day-to-Day / Trooper Experience", icon: "👮" };
+  }
+
   if (
     q.includes("salary") ||
     q.includes("pay") ||
@@ -108,23 +119,15 @@ function categorizeQuestion(question) {
     return { category: "Salary / Pay / Compensation", icon: "💰" };
   }
 
-  // Day in the life / Experience questions
-  if (
-    (q.includes("what") && q.includes("like") && (q.includes("being") || q.includes("working"))) ||
-    q.includes("day in the life") ||
-    q.includes("typical day") ||
-    (q.includes("what") && q.includes("do") && (q.includes("daily") || q.includes("day to day"))) ||
-    q.includes("experience")
-  ) {
-    return { category: "Day-to-Day / Trooper Experience", icon: "👮" };
-  }
-
+  // Locations - be more specific to avoid matching "trooper"
   if (
     q.includes("location") ||
-    (q.includes("troop") && !q.includes("trooper")) ||
+    q.includes("troop f") || // troop followed by letter (Troop F, Troop A, etc)
+    q.includes("which troop") ||
     (q.includes("where") && (q.includes("work") || q.includes("posted") || q.includes("stationed"))) ||
     q.includes("which area") ||
-    q.includes("post")
+    q.includes("post") ||
+    q.includes("assignment")
   ) {
     return { category: "Locations / Troop Assignments", icon: "📍" };
   }
